@@ -6,16 +6,12 @@ terraform {
       source  = "hashicorp/aws"
       version = ">= 6.0"
     }
-    archive = {
-      source  = "hashicorp/archive"
-      version = ">= 2.0"
-    }
   }
 }
 
 locals {
-  slack_webhook_enabled  = trimspace(var.slack_webhook_url) != ""
-  lambda_artifact_prefix = "${path.root}/.terraform/runs-on-${substr(sha1(path.cwd), 0, 8)}-${var.stack_name}"
+  slack_webhook_enabled = trimspace(var.slack_webhook_url) != ""
+  lambda_artifact_dir   = "${path.module}/../../../lambdas/dist"
 }
 
 resource "aws_sns_topic" "alerts" {
@@ -88,11 +84,39 @@ resource "aws_iam_role" "slack_webhook" {
   )
 }
 
-resource "aws_iam_role_policy_attachment" "slack_webhook_basic_execution" {
+resource "aws_cloudwatch_log_group" "slack_webhook" {
   count = local.slack_webhook_enabled ? 1 : 0
 
-  role       = aws_iam_role.slack_webhook[0].name
-  policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+  name              = "/runs-on/${var.stack_name}/lambda/slack-webhook"
+  retention_in_days = 14
+
+  tags = merge(
+    var.tags,
+    {
+      Name = "${var.stack_name}-slack-webhook"
+    }
+  )
+}
+
+resource "aws_iam_role_policy" "slack_webhook_logs" {
+  count = local.slack_webhook_enabled ? 1 : 0
+
+  name = "RunsOnSlackWebhookLogPermissions"
+  role = aws_iam_role.slack_webhook[0].id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "logs:CreateLogStream",
+          "logs:PutLogEvents",
+        ]
+        Resource = "${aws_cloudwatch_log_group.slack_webhook[0].arn}:*"
+      },
+    ]
+  })
 }
 
 resource "aws_lambda_function" "slack_webhook" {
@@ -100,13 +124,18 @@ resource "aws_lambda_function" "slack_webhook" {
 
   function_name = "${var.stack_name}-slack-webhook"
   role          = aws_iam_role.slack_webhook[0].arn
-  runtime       = "python3.11"
+  runtime       = "python3.14"
   handler       = "index.handler"
   timeout       = 10
   memory_size   = 128
 
-  filename         = data.archive_file.slack_webhook[0].output_path
-  source_code_hash = data.archive_file.slack_webhook[0].output_base64sha256
+  filename         = "${local.lambda_artifact_dir}/slack-webhook.zip"
+  source_code_hash = filebase64sha256("${local.lambda_artifact_dir}/slack-webhook.zip")
+
+  logging_config {
+    log_format = "Text"
+    log_group  = aws_cloudwatch_log_group.slack_webhook[0].name
+  }
 
   environment {
     variables = {
@@ -121,18 +150,10 @@ resource "aws_lambda_function" "slack_webhook" {
       Name = "${var.stack_name}-slack-webhook"
     }
   )
-}
 
-data "archive_file" "slack_webhook" {
-  count = local.slack_webhook_enabled ? 1 : 0
-
-  type        = "zip"
-  output_path = "${local.lambda_artifact_prefix}-slack-webhook.zip"
-
-  source {
-    content  = file("${path.module}/../../../lambdas/slack_webhook.py")
-    filename = "index.py"
-  }
+  depends_on = [
+    aws_iam_role_policy.slack_webhook_logs,
+  ]
 }
 
 resource "aws_lambda_permission" "slack_webhook" {

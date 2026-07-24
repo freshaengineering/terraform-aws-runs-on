@@ -1,6 +1,7 @@
 package test
 
 import (
+	"archive/zip"
 	"os"
 	"path/filepath"
 	"strings"
@@ -26,6 +27,58 @@ func readRepoSource(t *testing.T, parts ...string) string {
 	content, err := os.ReadFile(filepath.Join(pathParts...))
 	require.NoError(t, err)
 	return string(content)
+}
+
+func TestPlanSourceTerraformLambdaArtifactsAreBundled(t *testing.T) {
+	t.Parallel()
+
+	for _, parts := range [][]string{
+		{"modules", "control_plane", "alerts", "main.tf"},
+		{"modules", "control_plane", "fleet", "job_diagnostics_resolver.tf"},
+		{"modules", "control_plane", "fleet", "main.tf"},
+		{"modules", "control_plane", "fleet", "secrets.tf"},
+		{"modules", "control_plane", "flex", "github_runner_cache.tf"},
+		{"modules", "control_plane", "flex", "ingress.tf"},
+		{"modules", "control_plane", "flex", "job_diagnostics_resolver.tf"},
+		{"modules", "control_plane", "flex", "main.tf"},
+		{"modules", "control_plane", "flex", "secrets.tf"},
+		{"modules", "control_plane", "flex", "waf.tf"},
+	} {
+		source := readTerraformSource(t, parts...)
+		assert.NotContains(t, source, `data "archive_file"`, strings.Join(parts, "/"))
+		assert.NotContains(t, source, `data.archive_file`, strings.Join(parts, "/"))
+		assert.NotContains(t, source, `hashicorp/archive`, strings.Join(parts, "/"))
+		assert.NotContains(t, source, `path.root}/.terraform`, strings.Join(parts, "/"))
+	}
+
+	for _, artifact := range []struct {
+		name      string
+		zipEntry  string
+		reference string
+	}{
+		{name: "fleet-config-materializer.zip", zipEntry: "index.py", reference: "fleet/secrets.tf"},
+		{name: "github-apps-setup.zip", zipEntry: "index.js", reference: "flex/ingress.tf"},
+		{name: "github-runner-cache-refresh.zip", zipEntry: "index.js", reference: "flex/github_runner_cache.tf"},
+		{name: "github-waf-sync.zip", zipEntry: "index.js", reference: "flex/waf.tf"},
+		{name: "job-diagnostics-resolver.zip", zipEntry: "index.js", reference: "flex/fleet job diagnostics"},
+		{name: "public-ingress.zip", zipEntry: "index.js", reference: "flex/ingress.tf"},
+		{name: "slack-webhook.zip", zipEntry: "index.py", reference: "alerts/main.tf"},
+		{name: "stack-config-materializer.zip", zipEntry: "index.py", reference: "flex/secrets.tf"},
+	} {
+		artifactPath := filepath.Join("..", "..", "..", "lambdas", "dist", artifact.name)
+		archive, err := zip.OpenReader(artifactPath)
+		require.NoErrorf(t, err, "%s should exist for %s", artifact.name, artifact.reference)
+		defer archive.Close()
+		require.Len(t, archive.File, 1, artifact.name)
+		assert.Equal(t, artifact.zipEntry, archive.File[0].Name, artifact.name)
+	}
+
+	flexMain := readTerraformSource(t, "modules", "control_plane", "flex", "main.tf")
+	fleetMain := readTerraformSource(t, "modules", "control_plane", "fleet", "main.tf")
+	alertsMain := readTerraformSource(t, "modules", "control_plane", "alerts", "main.tf")
+	assert.Contains(t, flexMain, `lambda_artifact_dir`)
+	assert.Contains(t, fleetMain, `lambda_artifact_dir`)
+	assert.Contains(t, alertsMain, `lambda_artifact_dir`)
 }
 
 func TestPlanSourceStackConfigMaterializerWiring(t *testing.T) {
@@ -173,7 +226,8 @@ func TestPlanSourceGitHubRunnerCacheRefreshSeedWiring(t *testing.T) {
 	assert.Contains(t, githubRunnerCacheTF, "function_name = aws_lambda_function.github_runner_cache_refresh.function_name")
 	assert.Contains(t, githubRunnerCacheTF, "bucket = var.extras.cache.bucket_name")
 	assert.NotContains(t, githubRunnerCacheTF, "lifecycle_scope")
-	assert.NotContains(t, githubRunnerCacheTF, "triggers =")
+	assert.Contains(t, githubRunnerCacheTF, "triggers =")
+	assert.Contains(t, githubRunnerCacheTF, "lambda_version = aws_lambda_function.github_runner_cache_refresh.source_code_hash")
 }
 
 func TestPlanSourceCustomPolicyWiring(t *testing.T) {
@@ -210,6 +264,19 @@ func TestPlanSourceCloudFormationStackConfigUsesDeploymentMethod(t *testing.T) {
 
 	assert.Contains(t, template, `DeploymentMethod: "cloudformation"`)
 	assert.NotContains(t, template, "InfrastructureSource")
+}
+
+func TestPlanSourceCloudFormationCostAllocationTagScheduleFollowsCostReports(t *testing.T) {
+	t.Parallel()
+
+	template := readRepoSource(t, "cloudformation", "template.yaml")
+	_, afterResource, ok := strings.Cut(template, "  SchedulerCostAllocationTag:")
+	require.True(t, ok, "SchedulerCostAllocationTag resource should exist")
+	resourceBody, _, ok := strings.Cut(afterResource, "  RunsOnGitHubRunnerCacheRefreshSchedule:")
+	require.True(t, ok, "SchedulerCostAllocationTag resource block should be delimited")
+
+	assert.Contains(t, resourceBody, "Condition: CostReportsEnabled")
+	assert.Contains(t, resourceBody, `Input: '{"detail-type":"RunsOn Cost Allocation Tag"}'`)
 }
 
 func TestPlanSourceTerraformEphemeralRegistryUsesGeneratedNameAndStackTags(t *testing.T) {
@@ -262,10 +329,22 @@ func TestPlanSourceTerraformECRPullThroughCacheWiring(t *testing.T) {
 	assert.Contains(t, computeIAMTF, `resource "aws_iam_role_policy" "ec2_ecr_pull_through_cache_access"`)
 	assert.Contains(t, computeIAMTF, `ecr:BatchImportUpstreamImage`)
 	assert.Contains(t, computeIAMTF, `ecr:CreateRepository`)
+	assert.Contains(t, computeIAMTF, `AmazonElasticContainerRegistryPublicReadOnly`)
+	assert.NotContains(t, computeIAMTF, `AmazonElasticContainerRegistryPublicFullAccess`)
 
 	assert.Contains(t, launchTemplatesTF, `RUNS_ON_ECR_PULL_THROUGH_CACHE=`)
 	assert.Contains(t, launchTemplatesTF, `RUNS_ON_ECR_PULL_THROUGH_CACHE_DOCKER_HUB_MIRROR=`)
 	assert.Contains(t, linuxUserData, `${EphemeralRegistryEnvLine}`)
+}
+
+func TestPlanSourceBootstrapServiceRejectsManualStops(t *testing.T) {
+	t.Parallel()
+
+	linuxUserData := readTerraformSource(t, "modules", "runner", "compute", "user-data", "linux-bootstrap.sh.tmpl")
+
+	assert.Contains(t, linuxUserData, "RefuseManualStop=yes")
+	assert.Contains(t, linuxUserData, "Restart=no")
+	assert.NotContains(t, linuxUserData, "RefuseManualStart=yes")
 }
 
 func TestPlanSourceFleetECRPullThroughCacheReleaseWiring(t *testing.T) {
@@ -302,6 +381,7 @@ func TestPlanSourceFleetECRPullThroughCacheReleaseWiring(t *testing.T) {
 
 	assert.NotContains(t, deployWorkflow, "docker_hub_pull_through_cache_secret_arn")
 	assert.NotContains(t, deployWorkflow, `ecr_pull_through_cache_rules = {`)
+	assert.Contains(t, deployWorkflow, `-var "license_key=${RUNS_ON_LICENSE_KEY}"`)
 	assert.NotContains(t, previewWorkflow, "FLEET_DOCKER_HUB_PULL_THROUGH_CACHE_SECRET_ARN")
 	assert.NotContains(t, stageWorkflow, "FLEET_DOCKER_HUB_PULL_THROUGH_CACHE_SECRET_ARN")
 	assert.Contains(t, previewWorkflow, `if: ${{ always() && needs.build.result == 'success' && needs.deploy-fleet-private-true.result == 'success' }}`)
@@ -311,4 +391,20 @@ func TestPlanSourceFleetECRPullThroughCacheReleaseWiring(t *testing.T) {
 	assert.Contains(t, e2eWorkflow, "registry-1.docker.io")
 	assert.Contains(t, e2eWorkflow, "docker pull docker.io/library/node:22")
 	assert.Contains(t, e2eWorkflow, "docker run --rm docker.io/library/node:22 node --version")
+}
+
+func TestPlanSourceFlexCloudFormationUsesRepositoryLicenseSecret(t *testing.T) {
+	t.Parallel()
+
+	deployWorkflow := readRepoSource(t, ".github", "workflows", "core-deploy.yml")
+	previewWorkflow := readRepoSource(t, ".github", "workflows", "core-preview.yml")
+	stageWorkflow := readRepoSource(t, ".github", "workflows", "core-stage.yml")
+
+	assert.Contains(t, deployWorkflow, `runs_on_license_key:`)
+	assert.Contains(t, deployWorkflow, `RUNS_ON_LICENSE_KEY: ${{ secrets.runs_on_license_key }}`)
+	assert.Contains(t, deployWorkflow, `$overrides + {LicenseKey: $license_key}`)
+	assert.Contains(t, deployWorkflow, `bash ./scripts/write-cloudformation-parameters.sh "${PARAMETERS_FILE}"`)
+
+	assert.Equal(t, 3, strings.Count(previewWorkflow, "cloudformation_parameters_json: ${{ secrets.CLOUDFORMATION_PARAMETERS_PREVIEW_JSON }}\n      runs_on_license_key: ${{ secrets.RUNS_ON_LICENSE_KEY }}"))
+	assert.Equal(t, 3, strings.Count(stageWorkflow, "cloudformation_parameters_json: ${{ secrets.CLOUDFORMATION_PARAMETERS_STAGE_JSON }}\n      runs_on_license_key: ${{ secrets.RUNS_ON_LICENSE_KEY }}"))
 }

@@ -1,39 +1,6 @@
 # modules/flex_control_plane/secrets.tf
 # Secrets used by the worker runtime and setup flow
 
-data "archive_file" "stack_config_materializer" {
-  type        = "zip"
-  output_path = "${local.lambda_artifact_prefix}-stack-config-materializer.zip"
-
-  source {
-    content  = <<-PY
-      import boto3
-      from botocore.exceptions import ClientError
-
-      secrets = boto3.client("secretsmanager")
-
-
-      def handler(event, context):
-          secret_id = event["secret_id"]
-          secret_string = event["secret_string"]
-          client_request_token = event["client_request_token"]
-
-          try:
-              response = secrets.put_secret_value(
-                  SecretId=secret_id,
-                  SecretString=secret_string,
-                  ClientRequestToken=client_request_token,
-              )
-              return {"version_id": response["VersionId"]}
-          except ClientError as error:
-              if error.response.get("Error", {}).get("Code") == "ResourceExistsException":
-                  return {"version_id": client_request_token}
-              raise
-    PY
-    filename = "index.py"
-  }
-}
-
 resource "aws_secretsmanager_secret" "runs_on_stack_config" {
   name                    = local.stack_config_secret_id
   description             = "RunsOn stack configuration for the worker runtime and tooling"
@@ -48,7 +15,7 @@ resource "aws_secretsmanager_secret" "runs_on_stack_config" {
 }
 
 resource "aws_cloudwatch_log_group" "stack_config_materializer" {
-  name              = "/aws/lambda/${var.stack_name}-stack-config-materializer"
+  name              = "/runs-on/${var.stack_name}/lambda/stack-config-materializer"
   retention_in_days = 14
 
   tags = merge(
@@ -112,13 +79,18 @@ resource "aws_iam_role_policy" "stack_config_materializer" {
 resource "aws_lambda_function" "stack_config_materializer" {
   function_name = "${var.stack_name}-stack-config-materializer"
   role          = aws_iam_role.stack_config_materializer.arn
-  runtime       = "python3.11"
+  runtime       = "python3.14"
   handler       = "index.handler"
   timeout       = 30
   memory_size   = 128
 
-  filename         = data.archive_file.stack_config_materializer.output_path
-  source_code_hash = data.archive_file.stack_config_materializer.output_base64sha256
+  filename         = "${local.lambda_artifact_dir}/stack-config-materializer.zip"
+  source_code_hash = filebase64sha256("${local.lambda_artifact_dir}/stack-config-materializer.zip")
+
+  logging_config {
+    log_format = "Text"
+    log_group  = aws_cloudwatch_log_group.stack_config_materializer.name
+  }
 
   tags = merge(
     local.common_tags,

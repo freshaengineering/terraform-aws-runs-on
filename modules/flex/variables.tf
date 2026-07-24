@@ -115,7 +115,7 @@ variable "security_group_ids" {
 variable "ssh_allowed" {
   description = "Allow SSH access to runner instances"
   type        = bool
-  default     = true
+  default     = false
 }
 
 variable "ssh_cidr_range" {
@@ -154,6 +154,12 @@ variable "cache_bucket_namespace" {
     condition     = contains(["global", "account-regional"], var.cache_bucket_namespace)
     error_message = "Cache bucket namespace must be either global or account-regional."
   }
+}
+
+variable "cache_bucket_versioning_enabled" {
+  description = "Enable S3 object versioning for the cache bucket."
+  type        = bool
+  default     = false
 }
 
 variable "force_destroy_buckets" {
@@ -204,14 +210,14 @@ variable "ebs_encryption_key_id" {
 variable "app_image" {
   description = "Container image for the RunsOn worker service. Published module releases inject a pinned public default during mirror publication."
   type        = string
-  default     = "public.ecr.aws/c5h5o9k1/runs-on/runs-on:v3.1.1@sha256:3d95c7a4cbce8a20b9b71e8ce0d1d88d9ff67c41abfefdbde0ca2f81f7a54f98"
+  default     = "public.ecr.aws/c5h5o9k1/runs-on/runs-on:v3.1.3@sha256:4e464e38792a8838c2847a0c0393dba4f504065249b257d38f85df4bd7c81ce6"
   nullable    = false
 }
 
 variable "app_tag" {
   description = "Application version tag for RunsOn service. Published module releases inject the released default during mirror publication."
   type        = string
-  default     = "v3.1.1"
+  default     = "v3.1.3"
   nullable    = false
 }
 
