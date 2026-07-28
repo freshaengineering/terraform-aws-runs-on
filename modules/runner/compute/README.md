@@ -39,6 +39,7 @@ No modules.
 | [aws_iam_role_policy.ec2_snapshot_create](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/iam_role_policy) | resource |
 | [aws_iam_role_policy.ec2_snapshot_describe](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/iam_role_policy) | resource |
 | [aws_iam_role_policy.ec2_snapshot_lifecycle](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/iam_role_policy) | resource |
+| [aws_iam_role_policy.ec2_ssm_override](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/iam_role_policy) | resource |
 | [aws_iam_role_policy_attachment.ec2_custom](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/iam_role_policy_attachment) | resource |
 | [aws_iam_role_policy_attachment.ec2_ecr_public](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/iam_role_policy_attachment) | resource |
 | [aws_iam_role_policy_attachment.ec2_ssm](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/iam_role_policy_attachment) | resource |
@@ -71,6 +72,7 @@ No modules.
 | <a name="input_tags"></a> [tags](#input\_tags) | Additional tags for all resources | `map(string)` | n/a | yes |
 | <a name="input_enable_bedrock"></a> [enable\_bedrock](#input\_enable\_bedrock) | Enable Amazon Bedrock access for EC2 runner instances | `bool` | `false` | no |
 | <a name="input_runner_custom_policy_arn"></a> [runner\_custom\_policy\_arn](#input\_runner\_custom\_policy\_arn) | Optional managed IAM policy ARN to attach to the EC2 runner instance role | `string` | `""` | no |
+| <a name="input_runner_ssm_policy_override_json"></a> [runner\_ssm\_policy\_override\_json](#input\_runner\_ssm\_policy\_override\_json) | Optional IAM policy document (JSON) that replaces the AWS-managed<br/>AmazonSSMManagedInstanceCore policy on the runner EC2 instance role.<br/><br/>When null (the default), AmazonSSMManagedInstanceCore is attached unchanged;<br/>see that AWS-managed policy for the baseline set of SSM permissions the<br/>runner gets out of the box. When set, that managed policy is NOT attached and<br/>this document is attached as an inline policy instead, so operators can run<br/>least-privilege SSM permissions (for example, scoping ssm:GetParameter to<br/>specific parameter ARNs).<br/><br/>This only replaces the SSM managed policy; every other permission on the<br/>runner role (CloudWatch logs/metrics, S3 cache, EBS snapshots, ECR, EFS,<br/>etc.) is unaffected. A good starting point for a custom document is a copy of<br/>AmazonSSMManagedInstanceCore with the ssm:GetParameter/GetParameters resource<br/>narrowed. | `string` | `null` | no |
 
 ## Outputs
 
