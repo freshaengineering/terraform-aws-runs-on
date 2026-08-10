@@ -98,9 +98,21 @@ function webhookLogFields(payload, eventType, deliveryId) {
   return fields;
 }
 
+// GitHub intermittently delivers workflow_job events whose job object is an
+// explicit null, and an unparseable body leaves payload null here too. Either
+// way there is no job id and no labels, so nothing can be scheduled from the
+// event.
+function isUsableWorkflowJob(payload) {
+  const job = payload?.workflow_job;
+  return Boolean(job) && typeof job === 'object';
+}
+
 function shouldEnqueueWebhook(payload, eventType) {
   if (eventType !== 'workflow_job') return true;
-  const labels = Array.isArray(payload?.workflow_job?.labels) ? payload.workflow_job.labels : null;
+  // Drop unusable events at the door rather than forward something the
+  // consumer cannot act on.
+  if (!isUsableWorkflowJob(payload)) return false;
+  const labels = Array.isArray(payload.workflow_job.labels) ? payload.workflow_job.labels : null;
   if (!labels) return true;
   return labels.some((label) => {
     const value = String(label || '');
@@ -191,7 +203,14 @@ function createHandler(options = {}) {
     const logFields = webhookLogFields(parsedBody, eventType, deliveryId);
     log('info', 'Received GitHub webhook', logFields);
     if (!shouldEnqueueWebhook(parsedBody, eventType)) {
-      log('info', 'Skipping GitHub webhook without RunsOn labels', logFields);
+      const unusableJob = eventType === 'workflow_job' && !isUsableWorkflowJob(parsedBody);
+      log(
+        'info',
+        unusableJob
+          ? 'Skipping workflow_job webhook with no usable job object'
+          : 'Skipping GitHub webhook without RunsOn labels',
+        logFields,
+      );
       return jsonResponse(202, { status: 'ignored' });
     }
 
