@@ -1,4 +1,11 @@
 mock_provider "aws" {
+  mock_data "aws_partition" {
+    defaults = {
+      dns_suffix = "amazonaws.com"
+      partition  = "aws"
+    }
+  }
+
   mock_resource "aws_iam_role" {
     defaults = {
       unique_id = "AROATESTSTACKROLEID"
@@ -56,10 +63,10 @@ variables {
       repository_url  = ""
     }
     pull_through_cache = {
-      enabled                = false
-      registry_url           = ""
-      docker_hub_transparent = false
-      rules                  = {}
+      enabled           = false
+      registry_url      = ""
+      docker_hub_prefix = ""
+      rules             = {}
     }
   }
 }
