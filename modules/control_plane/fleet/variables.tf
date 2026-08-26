@@ -187,3 +187,9 @@ variable "diagnostic_settings" {
   type        = any
   default     = {}
 }
+
+variable "permission_boundary_arn" {
+  description = "Optional IAM permission boundary ARN applied to the roles this module creates."
+  type        = string
+  default     = ""
+}
