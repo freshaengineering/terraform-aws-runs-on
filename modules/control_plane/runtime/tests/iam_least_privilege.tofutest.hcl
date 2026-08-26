@@ -44,25 +44,19 @@ variables {
   ]
 }
 
-run "delete_fleets_is_scoped_to_this_account_and_region" {
+run "delete_fleets_is_never_granted" {
   command = plan
 
-  assert {
-    condition = anytrue([
-      for statement in jsondecode(aws_iam_role_policy.task.policy).Statement :
-      try(statement.Action, []) == ["ec2:DeleteFleets"] &&
-      statement.Resource == "arn:aws:ec2:us-east-1:123456789012:fleet/*"
-    ])
-    error_message = "runtime task ec2:DeleteFleets should be scoped to a fleet ARN in this account and region."
-  }
-
+  # The control plane creates instant fleets and tears down capacity with
+  # TerminateInstances on specific instance IDs; DeleteFleets would terminate
+  # sibling pool jobs sharing the fleet, and AWS reaps instant fleet requests
+  # on its own. No code path calls it.
   assert {
     condition = !anytrue([
       for statement in jsondecode(aws_iam_role_policy.task.policy).Statement :
-      contains(try(statement.Action, []), "ec2:DeleteFleets") &&
-      try(statement.Resource, "") == "*"
+      contains(try(statement.Action, []), "ec2:DeleteFleets")
     ])
-    error_message = "runtime task ec2:DeleteFleets must never be granted on an unscoped wildcard resource."
+    error_message = "runtime task role must not grant ec2:DeleteFleets; capacity teardown uses TerminateInstances on specific instances."
   }
 
   assert {

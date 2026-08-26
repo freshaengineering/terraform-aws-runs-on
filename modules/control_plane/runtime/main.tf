@@ -86,22 +86,18 @@ locals {
     {
       # CreateFleet cannot be resource-scoped: the fleet resource does not
       # exist yet at authorization time.
+      #
+      # ec2:DeleteFleets is deliberately NOT granted. The control plane creates
+      # instant fleets and always tears down capacity with TerminateInstances
+      # on specific instance IDs, because an instant fleet can hold sibling
+      # pool jobs and DeleteFleets would terminate every instance in it. AWS
+      # deletes an instant fleet request on its own once its instances are
+      # gone, so nothing ever needs to call DeleteFleets.
       Effect = "Allow"
       Action = [
         "ec2:CreateFleet",
       ]
       Resource = "*"
-    },
-    {
-      # Scoped to this account and region so the control plane cannot delete
-      # fleets outside the stack's own deployment. Narrowing further with
-      # aws:ResourceTag/runs-on-stack-name additionally requires the control
-      # plane to tag the fleet resource at create time.
-      Effect = "Allow"
-      Action = [
-        "ec2:DeleteFleets",
-      ]
-      Resource = "arn:${local.partition}:ec2:${var.region}:${var.account_id}:fleet/*"
     },
     {
       Effect = "Allow"
