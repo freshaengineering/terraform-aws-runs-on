@@ -84,17 +84,28 @@ locals {
       }
     },
     {
+      # CreateFleet cannot be resource-scoped: the fleet resource does not
+      # exist yet at authorization time.
       Effect = "Allow"
       Action = [
         "ec2:CreateFleet",
-        "ec2:DeleteFleets",
       ]
       Resource = "*"
     },
     {
+      # Scoped to this account and region so the control plane cannot delete
+      # fleets outside the stack's own deployment. Narrowing further with
+      # aws:ResourceTag/runs-on-stack-name additionally requires the control
+      # plane to tag the fleet resource at create time.
       Effect = "Allow"
       Action = [
-        "ec2:CreateTags",
+        "ec2:DeleteFleets",
+      ]
+      Resource = "arn:${local.partition}:ec2:${var.region}:${var.account_id}:fleet/*"
+    },
+    {
+      Effect = "Allow"
+      Action = [
         "ec2:RunInstances",
       ]
       Resource = [
@@ -106,10 +117,50 @@ locals {
         "arn:${local.partition}:ec2:${var.region}:${var.account_id}:subnet/*",
         "arn:${local.partition}:ec2:${var.region}:${var.account_id}:launch-template/*",
         "arn:${local.partition}:ec2:${var.region}:${var.account_id}:key-pair/*",
-        # Spot launches authorize RunInstances and tag-on-create CreateTags
-        # against the spot-instances-request resource.
+        # Spot launches authorize RunInstances against the
+        # spot-instances-request resource.
         "arn:${local.partition}:ec2:${var.region}:${var.account_id}:spot-instances-request/*",
       ]
+    },
+    {
+      # Tag-on-create targets for RunInstances. Deliberately unconditioned:
+      # the control plane also re-tags live instances and volumes as pool
+      # leases change state (runs-on-pool-lease-state,
+      # runs-on-pool-detached-at), which happens after tag-on-create.
+      Effect = "Allow"
+      Action = [
+        "ec2:CreateTags",
+      ]
+      Resource = [
+        "arn:${local.partition}:ec2:${var.region}:${var.account_id}:instance/*",
+        "arn:${local.partition}:ec2:${var.region}:${var.account_id}:volume/*",
+        "arn:${local.partition}:ec2:${var.region}:${var.account_id}:network-interface/*",
+        "arn:${local.partition}:ec2:${var.region}:${var.account_id}:spot-instances-request/*",
+      ]
+    },
+    {
+      # RunInstances authorizes against the AMI, subnet, security group, launch
+      # template and key pair, but RunInstances TagSpecifications never accept
+      # those resource types. The ec2:CreateAction condition keeps this from
+      # being an unconditional account-wide tag-write over shared networking
+      # and launch infrastructure, where a stray runs-on-stack-name tag could
+      # satisfy the resource-tag conditions on the mutating statements above.
+      Effect = "Allow"
+      Action = [
+        "ec2:CreateTags",
+      ]
+      Resource = [
+        "arn:${local.partition}:ec2:${var.region}::image/*",
+        "arn:${local.partition}:ec2:${var.region}:${var.account_id}:security-group/*",
+        "arn:${local.partition}:ec2:${var.region}:${var.account_id}:subnet/*",
+        "arn:${local.partition}:ec2:${var.region}:${var.account_id}:launch-template/*",
+        "arn:${local.partition}:ec2:${var.region}:${var.account_id}:key-pair/*",
+      ]
+      Condition = {
+        StringEquals = {
+          "ec2:CreateAction" = ["RunInstances", "CreateFleet"]
+        }
+      }
     },
     {
       Effect = "Allow"
@@ -344,7 +395,8 @@ resource "aws_ecs_cluster_capacity_providers" "this" {
 }
 
 resource "aws_iam_role" "execution" {
-  name = var.execution_role_name
+  name                 = var.execution_role_name
+  permissions_boundary = var.permission_boundary_arn != "" ? var.permission_boundary_arn : null
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
@@ -385,7 +437,8 @@ resource "aws_iam_role_policy" "execution_extra" {
 }
 
 resource "aws_iam_role" "task" {
-  name = var.task_role_name
+  name                 = var.task_role_name
+  permissions_boundary = var.permission_boundary_arn != "" ? var.permission_boundary_arn : null
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"

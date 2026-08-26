@@ -53,6 +53,12 @@ variable "cache_bucket_arn" {
   type        = string
 }
 
+variable "permission_boundary_arn" {
+  description = "Optional IAM permission boundary ARN applied to the roles this module creates."
+  type        = string
+  default     = ""
+}
+
 variable "ebs_encryption_key_id" {
   description = "Optional EBS encryption key ID"
   type        = string

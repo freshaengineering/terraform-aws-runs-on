@@ -305,6 +305,7 @@ module "runtime" {
   cluster_name                    = var.stack_name
   service_name                    = "fleetd"
   task_definition_family          = "${var.stack_name}-fleetd"
+  permission_boundary_arn         = var.permission_boundary_arn
   execution_role_name             = "${var.stack_name}-fleet-execution-role"
   task_role_name                  = "${var.stack_name}-fleet-role"
   task_policy_name                = "${var.stack_name}-fleet"

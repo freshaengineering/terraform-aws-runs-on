@@ -62,7 +62,8 @@ resource "aws_sns_topic_subscription" "email" {
 resource "aws_iam_role" "slack_webhook" {
   count = local.slack_webhook_enabled ? 1 : 0
 
-  name = "${var.stack_name}-slack-webhook-role"
+  name                 = "${var.stack_name}-slack-webhook-role"
+  permissions_boundary = var.permission_boundary_arn != "" ? var.permission_boundary_arn : null
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"

@@ -25,6 +25,12 @@ variable "slack_webhook_url" {
   sensitive   = true
 }
 
+variable "permission_boundary_arn" {
+  description = "Optional IAM permission boundary ARN applied to the roles this module creates."
+  type        = string
+  default     = ""
+}
+
 variable "allow_budgets_publish" {
   description = "Allow AWS Budgets in this account to publish to the alert topic."
   type        = bool
